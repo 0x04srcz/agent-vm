@@ -144,6 +144,7 @@
                 opencode
                 tmux
                 nodejs_24 # useful to install agent skills
+                gh
               ];
 
               services.getty.autologinUser = "agent";
