@@ -116,6 +116,12 @@
                     host.port = 4096;
                     guest.port = 4096;
                   }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 3000;
+                    guest.port = 3000;
+                  }
                 ];
               };
               nix.settings = {
@@ -130,7 +136,7 @@
               };
 
               networking.firewall.enable = true;
-              networking.firewall.allowedTCPPorts = [ 22 443 4096 ];
+              networking.firewall.allowedTCPPorts = [ 22 443 3000 4096 ];
 
               environment.systemPackages = with pkgs; [
                 git
@@ -161,6 +167,28 @@
                   Group = "users";
                   WorkingDirectory = "/home/agent";
                   ExecStart = "${pkgs.opencode}/bin/opencode serve --port 4096 --hostname 0.0.0.0";
+                  Restart = "on-failure";
+                  RestartSec = 5;
+                };
+              };
+
+              # Search web app — clean UI for AI-powered search.
+              # Talks to the OpenCode server API which has the SearX MCP tool.
+              # Accessible at http://localhost:3000 from the host.
+              systemd.services.search-web = {
+                description = "AI Search web app";
+                after = [ "network.target" "opencode-serve.service" ];
+                wants = [ "opencode-serve.service" ];
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  User = "agent";
+                  Group = "users";
+                  WorkingDirectory = "/home/agent/.config/opencode/search-web";
+                  ExecStart = "${pkgs.python3}/bin/python3 /home/agent/.config/opencode/search-web/app.py";
+                  Environment = [
+                    "OPENCODE_URL=http://localhost:4096"
+                    "SEARCH_PORT=3000"
+                  ];
                   Restart = "on-failure";
                   RestartSec = 5;
                 };
