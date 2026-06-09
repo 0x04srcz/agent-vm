@@ -119,8 +119,8 @@
                   {
                     from = "host";
                     proto = "tcp";
-                    host.port = 3000;
-                    guest.port = 3000;
+                    host.port = 4097;
+                    guest.port = 4097;
                   }
                 ];
               };
@@ -136,7 +136,7 @@
               };
 
               networking.firewall.enable = true;
-              networking.firewall.allowedTCPPorts = [ 22 443 3000 4096 ];
+              networking.firewall.allowedTCPPorts = [ 22 443 4096 4097 ];
 
               environment.systemPackages = with pkgs; [
                 git
@@ -174,7 +174,7 @@
 
               # Search web app — clean UI for AI-powered search.
               # Talks to the OpenCode server API which has the SearX MCP tool.
-              # Accessible at http://localhost:3000 from the host.
+              # Accessible at http://localhost:4097 from the host.
               systemd.services.search-web = {
                 description = "AI Search web app";
                 after = [ "network.target" "opencode-serve.service" ];
@@ -187,7 +187,7 @@
                   ExecStart = "${pkgs.python3}/bin/python3 /home/agent/.config/opencode/search-web/app.py";
                   Environment = [
                     "OPENCODE_URL=http://localhost:4096"
-                    "SEARCH_PORT=3000"
+                    "SEARCH_PORT=4097"
                   ];
                   Restart = "on-failure";
                   RestartSec = 5;
