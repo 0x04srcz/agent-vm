@@ -172,27 +172,10 @@
                 };
               };
 
-              # Search web app — clean UI for AI-powered search.
-              # Talks to the OpenCode server API which has the SearX MCP tool.
-              # Accessible at http://localhost:4097 from the host.
-              systemd.services.search-web = {
-                description = "AI Search web app";
-                after = [ "network.target" "opencode-serve.service" ];
-                wants = [ "opencode-serve.service" ];
-                wantedBy = [ "multi-user.target" ];
-                serviceConfig = {
-                  User = "agent";
-                  Group = "users";
-                  WorkingDirectory = "/home/agent/.config/opencode/search-web";
-                  ExecStart = "${pkgs.python3}/bin/python3 /home/agent/.config/opencode/search-web/app.py";
-                  Environment = [
-                    "OPENCODE_URL=http://localhost:4096"
-                    "SEARCH_PORT=4097"
-                  ];
-                  Restart = "on-failure";
-                  RestartSec = 5;
-                };
-              };
+              # Search web app runs as a user service from
+              # ~/.config/systemd/user/search-web.service (on the virtiofs
+              # mount).  This avoids needing sudo to restart it and keeps
+              # the app config co-located with the other search files.
 
               services.getty.autologinUser = "agent";
               system.stateVersion = "25.11";
