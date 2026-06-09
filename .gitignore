@@ -12,5 +12,6 @@
 *.log
 *.pid
 *.img
+*.sock
 GEMINI.md
 CLAUDE.md

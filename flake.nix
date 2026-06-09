@@ -107,14 +107,14 @@
                   {
                     from = "host";
                     proto = "tcp";
-                    host = {
-                      # address = "127.0.0.1";
-                      port = 2222;
-                    };
-                    guest = {
-                      # address = "127.0.0.1";
-                      port = 22;
-                    };
+                    host.port = 2222;
+                    guest.port = 22;
+                  }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 4096;
+                    guest.port = 4096;
                   }
                 ];
               };
@@ -130,7 +130,7 @@
               };
 
               networking.firewall.enable = true;
-              networking.firewall.allowedTCPPorts = [ 22 443 ];
+              networking.firewall.allowedTCPPorts = [ 22 443 4096 ];
 
               environment.systemPackages = with pkgs; [
                 git
@@ -145,7 +145,26 @@
                 tmux
                 nodejs_24 # useful to install agent skills
                 gh
+                # Python + MCP for searx-mcp server (AI-powered web search)
+                (python3.withPackages (ps: with ps; [ mcp httpx ]))
               ];
+
+              # OpenCode headless server — accepts remote commands via
+              # `opencode run --attach http://localhost:4096 ...` from the host.
+              # Also serves a web UI at http://localhost:4096 (port forwarded).
+              systemd.services.opencode-serve = {
+                description = "OpenCode headless server";
+                after = [ "network.target" ];
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  User = "agent";
+                  Group = "users";
+                  WorkingDirectory = "/home/agent";
+                  ExecStart = "${pkgs.opencode}/bin/opencode serve --port 4096 --hostname 0.0.0.0";
+                  Restart = "on-failure";
+                  RestartSec = 5;
+                };
+              };
 
               services.getty.autologinUser = "agent";
               system.stateVersion = "25.11";
