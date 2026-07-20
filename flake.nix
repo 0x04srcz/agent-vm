@@ -60,18 +60,29 @@
                 }
               ];
 
+              # Give a root shell at the initrd emergency prompt. Without this,
+              # the initrd locks root and sulogin refuses, so a failed
+              # switch-root leaves you with no way in over the console.
+              boot.initrd.systemd.emergencyAccess = true;
+
               microvm = {
                 hypervisor = "qemu";
                 socket = "control.socket";
                 mem = 16384;
                 vcpu = 8;
-                
+
+                # The writable store overlay below is persistent, so the guest's
+                # Nix db survives reboots. Boot-time closure registration clashes
+                # with that (see microvm.nix docs), which can fail activation on
+                # generation changes. Disable it for a persistent overlay.
+                registerClosure = false;
+
                 writableStoreOverlay = "/nix/.rw-store";
                 volumes = [
                   {
                     mountPoint = "/var";
                     image = "var.img";
-                    size = 256;
+                    size = 4096;   # was 256 MB — too small for journald + agents
                   }
                   {
                     image = "nix-store-overlay.img";
@@ -128,7 +139,7 @@
                 allowed-users = [ "agent" ];
                 trusted-users = [ "root" "agent" "@wheel" ];
               };
-              
+
               services.openssh = {
                 enable = true;
                 settings.PasswordAuthentication = false;
