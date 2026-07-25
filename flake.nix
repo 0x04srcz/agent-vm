@@ -87,7 +87,7 @@
                   {
                     image = "nix-store-overlay.img";
                     mountPoint = config.microvm.writableStoreOverlay;
-                    size = 30720;
+                    size = 81920;
                   }
                 ];
 
@@ -138,6 +138,15 @@
               nix.settings = {
                 allowed-users = [ "agent" ];
                 trusted-users = [ "root" "agent" "@wheel" ];
+                min-free = 3 * 1024 * 1024 * 1024;   # start collecting under 3 GB free
+                max-free = 8 * 1024 * 1024 * 1024;   # collect up to 8 GB free
+                keep-derivations = false;
+                keep-outputs = false;
+              };
+              nix.gc = {
+                automatic = true;
+                dates = "daily";
+                options = "--delete-older-than 3d";
               };
 
               services.openssh = {
