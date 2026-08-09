@@ -171,6 +171,7 @@
                 tmux
                 nodejs_24 # useful to install agent skills
                 gh
+                pi-coding-agent
                 # Python + MCP for searx-mcp server (AI-powered web search)
                 (python3.withPackages (ps: with ps; [ mcp httpx ]))
               ];
