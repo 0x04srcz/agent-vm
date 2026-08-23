@@ -173,6 +173,7 @@
                 gh
                 pi-coding-agent
                 # Python + MCP for searx-mcp server (AI-powered web search)
+                uv
                 (python3.withPackages (ps: with ps; [ mcp httpx ]))
               ];
 
