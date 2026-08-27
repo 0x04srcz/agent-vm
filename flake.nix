@@ -138,15 +138,147 @@
               nix.settings = {
                 allowed-users = [ "agent" ];
                 trusted-users = [ "root" "agent" "@wheel" ];
-                min-free = 3 * 1024 * 1024 * 1024;   # start collecting under 3 GB free
-                max-free = 8 * 1024 * 1024 * 1024;   # collect up to 8 GB free
+                # min-free / max-free are DELIBERATELY UNSET.
+                #
+                # They would make nix-daemon collect garbage on demand when a
+                # build runs low on space -- which is the same destructive
+                # sweep the disabled nix.gc timer performs, merely triggered by
+                # a build instead of a clock. Nix's collector walks the store
+                # DIRECTORY and deletes every entry it cannot find in its
+                # database; the 9p lower layer is full of exactly such entries,
+                # so it whites them out. See the nix.gc comment below.
+                #
+                # The obvious objection is "then a build will die with ENOSPC".
+                # It might, and that is the better failure: a build that fails
+                # is retried after reclaiming space, whereas a whiteout storm
+                # leaves a VM that cannot run `nix` at all and needs its image
+                # rebuilt from the host.
+                #
+                # It would also not have bought much. Measured 2026-08-27 during
+                # a live GC: about 11000 additional whiteouts freed roughly
+                # 0.1 GB. That is the whole problem in one number -- the space
+                # is not in this image, it is on the host, and "deleting" a
+                # lower-layer path frees nothing here while costing an inode
+                # for the whiteout. Collection is not a space-management tool in
+                # this VM; it is only damage.
+                #
+                # SEE "reclaiming space" IN THE nix.gc COMMENT for what to do
+                # instead.
+
+                # Cap build parallelism. The default is "auto", i.e. one job per
+                # vCPU -- 8 here -- and each job can itself spawn cores worth of
+                # compilation, so an unattended build can ask for far more than
+                # the laptop can dissipate. The VM is for agent work, not a
+                # build farm; 2 jobs still parallelise well while leaving the
+                # machine usable and cool.
+                max-jobs = 2;
                 keep-derivations = false;
                 keep-outputs = false;
               };
-              nix.gc = {
-                automatic = true;
-                dates = "daily";
-                options = "--delete-older-than 3d";
+              # AUTOMATIC GARBAGE COLLECTION IS OFF, AND MUST STAY OFF.
+              #
+              # Not a tuning preference: in this VM a store GC is actively
+              # DESTRUCTIVE, because of two settings that look unrelated.
+              #
+              #   * /nix/store here is an OVERLAY whose lowerdir is a read-only
+              #     9p share of the HOST's store. Only the upper layer
+              #     (/nix/.rw-store, a persistent ext4 image) is writable.
+              #   * registerClosure = false (above) means the guest's Nix
+              #     DATABASE has no record of the paths arriving via that lower
+              #     layer.
+              #
+              # A GC deletes whatever it cannot prove is reachable from a
+              # gcroot. Since the database does not know the host-provided
+              # paths, it cannot prove anything about them, so it treats the
+              # running system's own closure as garbage. It cannot truly delete
+              # from a read-only lower layer, so overlayfs records a WHITEOUT in
+              # the upper layer instead -- a character device 0,0 that hides the
+              # still-present host path from the guest.
+              #
+              # The VM quietly eats itself. Observed 2026-08-27: 45412 whiteouts
+              # in the upper layer, `awk` gone from PATH, and `nix` itself
+              # unable to start because the nix-main and curl libraries in its
+              # RUNPATH had been whited out ("error while loading shared
+              # libraries: libnixmain.so.2.34.8"). The same damage happened on
+              # 2026-08-09 via a manual `nix-collect-garbage -d`, which left
+              # /run/current-system dangling. That was recorded as "never run GC
+              # by hand in the VM" -- but the DAILY TIMER had been doing exactly
+              # that automatically all along.
+              #
+              # The damage is PERSISTENT: whiteouts live in the upper-layer
+              # image, so a reboot does not clear them. Recovery means
+              # recreating nix-store-overlay.img, not restarting the VM.
+              #
+              # It is expensive while it happens, too. Every lookup is a 9p
+              # round trip to the host, so a GC using about one guest core
+              # showed up as 248% CPU on the HOST -- roughly 2.5 cores -- and
+              # drove the laptop to 86-100 C while the user's whole desktop
+              # session used 7.7%. It sat in uninterruptible D state on 9p IO,
+              # so it could not even be killed promptly.
+              #
+              # RECLAIMING SPACE WITHOUT COLLECTING GARBAGE
+              #
+              # The fair objection to disabling GC is "then the 79 GB overlay
+              # fills up". Three things make that far less pressing than it
+              # sounds, and there is a safe procedure for when it does.
+              #
+              # 1. Collection barely reclaims anything HERE anyway. Measured
+              #    2026-08-27 during a live GC: ~11000 further whiteouts freed
+              #    about 0.1 GB. Most of what it "deletes" lives on the host's
+              #    read-only layer, where deleting frees nothing in this image
+              #    and merely spends an inode on the whiteout. Of 73260 entries
+              #    in the upper layer, 56572 were whiteouts and only 16688 real
+              #    paths -- the collector had spent most of its effort making
+              #    the VM smaller in capability, not in bytes.
+              #
+              # 2. Headroom is larger than it looks: 7.7 GB of 79 GB used (11%),
+              #    866166 of 5242880 inodes (17%). Both grow only when the VM
+              #    BUILDS something, and max-jobs = 2 above bounds how fast.
+              #
+              # 3. The upper layer holds nothing irreplaceable -- only store
+              #    paths built inside the VM, every one of which can be rebuilt
+              #    or refetched. /home/agent is a separate virtiofs share and is
+              #    NOT affected.
+              #
+              # So the reclaim procedure is to recreate the image, from the HOST,
+              # with the VM stopped:
+              #
+              #   systemctl stop microvm@agent-vm
+              #   rm /var/lib/microvms/agent-vm/nix-store-overlay.img
+              #   systemctl start microvm@agent-vm     # recreated empty, 80 GB
+              #
+              # That is instant, frees everything at once, and cannot corrupt
+              # anything. It is also the ONLY way to clear whiteouts already
+              # written by earlier collections.
+              #
+              # THE REAL FIX, if this VM ever needs routine collection:
+              # registerClosure = true, so the guest database knows about the
+              # paths on the lower layer and the collector can prove them
+              # reachable. The comment on registerClosure above explains why it
+              # is off -- it conflicts with the persistent writable overlay.
+              # Changing that is a design decision about this VM, not a tweak,
+              # and it should be made deliberately rather than by re-enabling
+              # the timer and hoping.
+              nix.gc.automatic = false;
+
+              # Builds still hammer the store through the same 9p path, but
+              # unlike a GC something is usually waiting on them. Give them
+              # weight rather than a cap: full speed when the laptop is idle,
+              # yielding as soon as the user's session wants the CPU.
+              #
+              # WHICH LEVERS WORK HERE, since the obvious ones do not: the
+              # store's lower layer is a 9p share, not a block device, so its
+              # traffic never reaches the guest block layer and no block-IO
+              # control (ionice, IOWeight, IOReadIOPSMax) can see it. The guest
+              # block queues also use the `none` scheduler (verified via
+              # /sys/block/vd*/queue/scheduler), and IOSchedulingClass is only
+              # honoured by BFQ -- so it would be a no-op that merely looks like
+              # a fix. CPU is the only enforceable lever, and it suffices: every
+              # 9p request is issued by a running thread, so limiting cycles
+              # limits the request rate reaching the host. The cpu controller is
+              # confirmed delegated to system.slice.
+              systemd.services.nix-daemon.serviceConfig = {
+                CPUWeight = 20;
               };
 
               services.openssh = {
