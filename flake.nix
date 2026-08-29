@@ -12,14 +12,19 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    meridian = {
+      url = "github:rynfar/meridian";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, microvm }:
+  outputs = { self, nixpkgs, microvm, meridian }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
+        overlays = [ meridian.overlays.default ];
       };
     in {
       packages.${system} = {
@@ -32,6 +37,10 @@
           inherit system;
           modules = [
             microvm.nixosModules.microvm
+            {
+              # Expose meridian package into the NixOS module evaluation.
+              nixpkgs.overlays = [ meridian.overlays.default ];
+            }
             ({ config, ... }: {
               networking.hostName = "agent-vm";
               networking.useDHCP = true;
@@ -327,6 +336,7 @@
               environment.systemPackages = with pkgs; [
                 git
                 claude-code
+                meridian
                 gemini-cli
                 devenv
                 direnv
@@ -343,27 +353,35 @@
                 (python3.withPackages (ps: with ps; [ mcp httpx ]))
               ];
 
-              # OpenCode headless server — accepts remote commands via
-              # `opencode run --attach http://localhost:4096 ...` from the host.
-              # Also serves a web UI at http://localhost:4096 (port forwarded).
-              systemd.services.opencode-serve = {
-                description = "OpenCode headless server";
+              # Meridian — local Anthropic API from the Claude Max subscription.
+              # Both pi (models.json override) and opencode (per-session) point
+              # at this proxy. Runs as a daemon on the VM.
+              systemd.services.meridian = {
+                description = "Meridian Claude Max proxy";
                 after = [ "network.target" ];
                 wantedBy = [ "multi-user.target" ];
                 serviceConfig = {
                   User = "agent";
                   Group = "users";
                   WorkingDirectory = "/home/agent";
-                  ExecStart = "${pkgs.opencode}/bin/opencode serve --port 4096 --hostname 0.0.0.0";
+                  ExecStart = "${pkgs.meridian}/bin/meridian";
                   Restart = "on-failure";
                   RestartSec = 5;
                 };
-                # The unit gets a minimal systemd PATH that lacks
-                # /run/current-system/sw/bin, so the claude CLI (used by
-                # opencode-with-claude and the title model) is not found
-                # and requests fail with exit code 127. Extend it.
-                environment = { PATH = "${pkgs.claude-code}/bin:/run/current-system/sw/bin"; };
+                environment = {
+                  HOME = "/home/agent";
+                  # Ensure the claude CLI (agent SDK backend) is findable;
+                  # the unit's inherited PATH is minimal (systemd default).
+                  PATH = nixpkgs.lib.mkForce "/run/current-system/sw/bin";
+                };
               };
+
+              # Meridian's opencode plugin lives in the nix store; symlink it
+              # to a stable path so ~/.config/opencode/opencode.json can
+              # reference it without breaking on rebuild. The store path keeps
+              # the sibling priority-attestation.ts import resolvable.
+              environment.etc."meridian/plugin/meridian.ts".source =
+                "${pkgs.meridian}/lib/meridian/plugin/meridian.ts";
 
               # Search web app runs as a user service from
               # ~/.config/systemd/user/search-web.service (on the virtiofs
