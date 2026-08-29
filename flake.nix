@@ -358,6 +358,11 @@
                   Restart = "on-failure";
                   RestartSec = 5;
                 };
+                # The unit gets a minimal systemd PATH that lacks
+                # /run/current-system/sw/bin, so the claude CLI (used by
+                # opencode-with-claude and the title model) is not found
+                # and requests fail with exit code 127. Extend it.
+                environment = { PATH = "${pkgs.claude-code}/bin:/run/current-system/sw/bin"; };
               };
 
               # Search web app runs as a user service from
