@@ -133,6 +133,39 @@
                     host.port = 4097;
                     guest.port = 4097;
                   }
+                  # Plannotator review UI. A range so multiple pi sessions
+                  # (one per project, via opi) can each bind a free port:
+                  # PLANNOTATOR_PORT=19432-19436 picks the first free one.
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 19432;
+                    guest.port = 19432;
+                  }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 19433;
+                    guest.port = 19433;
+                  }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 19434;
+                    guest.port = 19434;
+                  }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 19435;
+                    guest.port = 19435;
+                  }
+                  {
+                    from = "host";
+                    proto = "tcp";
+                    host.port = 19436;
+                    guest.port = 19436;
+                  }
                 ];
               };
               nix.settings = {
@@ -288,7 +321,8 @@
               };
 
               networking.firewall.enable = true;
-              networking.firewall.allowedTCPPorts = [ 22 443 4096 4097 ];
+              # 19432-19436: plannotator review UI (multi-session port range).
+              networking.firewall.allowedTCPPorts = [ 22 443 4096 4097 19432 19433 19434 19435 19436 ];
 
               environment.systemPackages = with pkgs; [
                 git
