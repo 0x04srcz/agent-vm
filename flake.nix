@@ -65,6 +65,10 @@
                       command = "/run/current-system/sw/bin/shutdown";
                       options = [ "NOPASSWD" ];
                     }
+                    {
+                      command = "/run/current-system/sw/bin/systemctl";
+                      options = [ "NOPASSWD" ];
+                    }
                   ];
                 }
               ];
