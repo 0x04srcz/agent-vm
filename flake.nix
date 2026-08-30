@@ -377,6 +377,12 @@
                   # Ensure the claude CLI (agent SDK backend) is findable;
                   # the unit's inherited PATH is minimal (systemd default).
                   PATH = nixpkgs.lib.mkForce "/run/current-system/sw/bin";
+                  # Default all adapters to passthrough so clients (pi, opencode)
+                  # run their own tool loops and Meridian only forwards tool
+                  # calls. Without this the daemon comes up in "internal" mode:
+                  # pi warns that its tools aren't forwarded, and opencode's own
+                  # agentic loop desyncs ("session advanced while waiting").
+                  MERIDIAN_PASSTHROUGH = "1";
                 };
               };
 
