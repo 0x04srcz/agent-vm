@@ -102,6 +102,33 @@
                     mountPoint = config.microvm.writableStoreOverlay;
                     size = 81920;
                   }
+
+                  # REGENERABLE scratch lives on VM-local ext4, NOT on the
+                  # virtiofs home. /home/agent is a virtiofs share of the host,
+                  # so every write under it is a guest->host round trip, and the
+                  # cache is pure write-churn: opencode's 2.3G package cache plus
+                  # pip / npm / nix / uv / pre-commit build artifacts, all of
+                  # which rebuild themselves if lost. A fresh ext4 image mounted
+                  # over ~/.cache shadows the virtiofs copy, so that churn never
+                  # leaves the guest, and losing it on a redeploy costs nothing.
+                  # Ownership is fixed post-mount by the tmpfiles rule below
+                  # (a fresh ext4 mounts root-owned).
+                  #
+                  # DELIBERATELY ONLY ~/.cache. ~/.local/share is NOT relocated:
+                  # it holds opencode's session-history DB (~6.3G) and auth.json,
+                  # which are PRECIOUS and must stay on the durable virtiofs home
+                  # -- that dir is a plain host directory, so it survives a VM
+                  # redeploy and is covered by the host's backups, whereas a
+                  # VM-local image is neither. The rule is regenerable->local,
+                  # precious->durable-home, not agent-internal->local. The DB's
+                  # SQLite churn on virtiofs is the accepted price of keeping it
+                  # durable; its write RATE is modest next to build caches, and
+                  # the E-core pin on the host bounds the residual blast radius.
+                  {
+                    mountPoint = "/home/agent/.cache";
+                    image = "cache.img";
+                    size = 20480;
+                  }
                 ];
 
                 shares = [
@@ -336,6 +363,27 @@
               networking.firewall.enable = true;
               # 19432-19436: plannotator review UI (multi-session port range).
               networking.firewall.allowedTCPPorts = [ 22 443 4096 4097 19432 19433 19434 19435 19436 ];
+
+              # The cache.img volume above mounts a fresh, root-owned ext4 over
+              # ~/.cache. systemd-tmpfiles-setup runs after local-fs.target
+              # (i.e. after that mount), so this `d` rule adjusts the
+              # just-mounted dir rather than the shadowed virtiofs one, handing
+              # it to agent:users.
+              systemd.tmpfiles.rules = [
+                "d /home/agent/.cache 0755 agent users - -"
+              ];
+
+              # Python writes __pycache__ INSIDE the source tree by default,
+              # which for the virtiofs-mounted repos means a guest->host write on
+              # every import. Mirror the bytecode under the now-VM-local cache
+              # instead (no collisions: the prefix mirrors the full tree). The
+              # other common in-tree offender, direnv's .direnv, needs a
+              # $PWD-hashing direnvrc rather than a static var (a fixed
+              # DIRENV_LAYOUT_DIR would collide across projects), so it is left
+              # for a follow-up rather than set incorrectly here.
+              environment.variables = {
+                PYTHONPYCACHEPREFIX = "/home/agent/.cache/pycache";
+              };
 
               environment.systemPackages = with pkgs; [
                 git
