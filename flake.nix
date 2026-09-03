@@ -371,6 +371,16 @@
               # it to agent:users.
               systemd.tmpfiles.rules = [
                 "d /home/agent/.cache 0755 agent users - -"
+                # Persist pi's jiti TypeScript-transpile cache off tmpfs. jiti
+                # writes to os.tmpdir()/jiti = /tmp/jiti, and /tmp is tmpfs, so
+                # every reboot wiped it and forced a full ~90s cold retranspile
+                # of pi's ~500 bundled extension modules on the first launch.
+                # Symlinking that path onto the durable ~/.cache ext4 keeps the
+                # cache across reboots (measured: cold ~90s -> warm ~40s). The
+                # transpiled files live in ~/.cache/jiti; only the symlink is
+                # recreated each boot (tmpfs /tmp is fresh, ~/.cache persists).
+                "d /home/agent/.cache/jiti 0755 agent users - -"
+                "L+ /tmp/jiti - - - - /home/agent/.cache/jiti"
               ];
 
               # Python writes __pycache__ INSIDE the source tree by default,
@@ -383,6 +393,12 @@
               # for a follow-up rather than set incorrectly here.
               environment.variables = {
                 PYTHONPYCACHEPREFIX = "/home/agent/.cache/pycache";
+                # Persist Node's V8 bytecode compile cache off tmpfs as well, so
+                # the pi CLI bundle (and other node tools) skip recompilation
+                # across reboots. Node creates the dir on demand. Pairs with the
+                # jiti symlink above; together they keep first-launch-after-
+                # reboot at the warm ~40s rather than the ~90s cold path.
+                NODE_COMPILE_CACHE = "/home/agent/.cache/node-compile-cache";
               };
 
               environment.systemPackages = with pkgs; [
