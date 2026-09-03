@@ -420,18 +420,47 @@
                   Restart = "on-failure";
                   RestartSec = 5;
                 };
-                environment = {
-                  HOME = "/home/agent";
-                  # Ensure the claude CLI (agent SDK backend) is findable;
-                  # the unit's inherited PATH is minimal (systemd default).
-                  PATH = nixpkgs.lib.mkForce "/run/current-system/sw/bin";
-                  # Default all adapters to passthrough so clients (pi, opencode)
-                  # run their own tool loops and Meridian only forwards tool
-                  # calls. Without this the daemon comes up in "internal" mode:
-                  # pi warns that its tools aren't forwarded, and opencode's own
-                  # agentic loop desyncs ("session advanced while waiting").
-                  MERIDIAN_PASSTHROUGH = "1";
-                };
+                environment =
+                  let
+                    # Content scrubbers strip each harness's identity fingerprints
+                    # from the system prompt before it reaches Claude, so Anthropic
+                    # does not meter pi/opencode traffic as third-party Extra Usage
+                    # (the harness-added prompt data that caused the rate-limit
+                    # churn). pi-scrub is adapter-scoped to pi, opencode-scrub to
+                    # opencode; both ship prebuilt from the meridian flake overlay
+                    # (pkgs.meridianPlugins.<name>, already locked in flake.lock).
+                    pluginsJson = (pkgs.formats.json { }).generate "meridian-plugins.json" {
+                      plugins = [
+                        {
+                          path = pkgs.meridianPlugins.pi-scrub.path;
+                          enabled = true;
+                        }
+                        {
+                          path = pkgs.meridianPlugins.opencode-scrub.path;
+                          enabled = true;
+                        }
+                      ];
+                    };
+                  in
+                  {
+                    HOME = "/home/agent";
+                    # Ensure the claude CLI (agent SDK backend) is findable;
+                    # the unit's inherited PATH is minimal (systemd default).
+                    PATH = nixpkgs.lib.mkForce "/run/current-system/sw/bin";
+                    # Default all adapters to passthrough so clients (pi, opencode)
+                    # run their own tool loops and Meridian only forwards tool
+                    # calls. Without this the daemon comes up in "internal" mode:
+                    # pi warns that its tools aren't forwarded, and opencode's own
+                    # agentic loop desyncs ("session advanced while waiting").
+                    MERIDIAN_PASSTHROUGH = "1";
+                    # Load the prompt scrubbers via an explicit manifest. This
+                    # overrides Meridian's auto-discovered
+                    # ~/.config/meridian/plugins.json, whose lone entry pointed at
+                    # the non-persistent ~/.cache and so never survived rebuild.
+                    # The store-path references keep the built plugins GC-rooted
+                    # through the service closure.
+                    MERIDIAN_PLUGIN_CONFIG = "${pluginsJson}";
+                  };
               };
 
               # Meridian's opencode plugin lives in the nix store; symlink it
