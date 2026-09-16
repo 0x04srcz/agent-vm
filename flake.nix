@@ -16,9 +16,16 @@
       url = "github:rynfar/meridian";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Spec 0027: Serena, an LSP-backed symbol-level MCP retrieval server.
+    # Pinned to a commit for reproducibility; its flake exports
+    # packages.<system>.serena (mainProgram "serena").
+    serena = {
+      url = "github:oraios/serena/704e8c3d1929bdd74bf0c8eee1596aeddf03fdb2";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, microvm, meridian }:
+  outputs = { self, nixpkgs, microvm, meridian, serena }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -419,6 +426,10 @@
                 # Python + MCP for searx-mcp server (AI-powered web search)
                 uv
                 (python3.withPackages (ps: with ps; [ mcp httpx ]))
+                # Spec 0027: Serena LSP-backed semantic-retrieval MCP server.
+                # Opt-in per project via a project-local .mcp.json; hardened
+                # to a retrieval-only posture (see ~/.pi runbook 0027).
+                serena.packages.${system}.default
               ];
 
               # Meridian — local Anthropic API from the Claude Max subscription.
