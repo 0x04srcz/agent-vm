@@ -412,7 +412,6 @@
                 git
                 claude-code
                 meridian
-                gemini-cli
                 devenv
                 direnv
                 nix-direnv
