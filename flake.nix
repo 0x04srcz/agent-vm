@@ -14,7 +14,57 @@
     };
     meridian = {
       url = "github:rynfar/meridian";
-      inputs.nixpkgs.follows = "nixpkgs";
+      # DELIBERATELY NOT `inputs.nixpkgs.follows = "nixpkgs"`. Re-adding it
+      # breaks `nixos-rebuild` on the host, for a reason that is invisible from
+      # inside this repo.
+      #
+      # Meridian's package.nix marks ITSELF broken when the claude-code it is
+      # handed is older than the `@anthropic-ai/claude-code` floor in its own
+      # package.json:
+      #
+      #   broken = versionOlder claudeCode.version
+      #     (removePrefix "^" package.dependencies."@anthropic-ai/claude-code");
+      #
+      # Anthropic ships claude-code almost daily and nixpkgs trails it by an
+      # unpredictable margin, so the floor and whatever claude-code sits in the
+      # ambient nixpkgs drift apart constantly. When the floor wins that race,
+      # evaluation dies with
+      #
+      #   Refusing to evaluate package 'meridian-x.y.z' ... broken
+      #
+      # and it takes the WHOLE host rebuild with it, not just this VM.
+      #
+      # `follows` is what exposed us to that race. It points Meridian at our
+      # nixpkgs -- and a host flake importing this one overrides that input in
+      # turn, so Meridian ends up built against a nixpkgs nobody picked for it
+      # and this repo's own pin is bypassed entirely. Measured 2026-10-27:
+      # Meridian 1.86.0 floors claude-code at ^2.1.293; this repo's nixpkgs
+      # (3ec6363) had 2.1.308 and evaluated fine, while the framework host's
+      # (3ed67ec) had 2.1.257 and did not. Hence the asymmetry that makes this
+      # so confusing to chase -- `nix flake check` and `nix build .#agent-vm`
+      # both pass standalone here, and only `nixos-rebuild` on the host fails.
+      #
+      # Meridian's own fallback cannot rescue it either: package.nix retries
+      # via `claude-code.override { manifest = ...; }`, but that vendored
+      # manifest is pinned at 2.1.284 -- below its own ^2.1.293 floor.
+      #
+      # Without `follows`, Meridian uses the nixpkgs pinned in ITS OWN
+      # flake.lock (6510408d, claude-code 2.1.295 against the ^2.1.293 floor).
+      # Upstream moves that pin in lockstep with the floor, and Nix takes a
+      # dependency's transitive inputs from that dependency's lockfile, so
+      # `nix flake update` here advances the pair together rather than sliding
+      # them apart. Verified: `nix flake update` leaves meridian/nixpkgs on
+      # 6510408d rather than marching it to nixos-unstable HEAD.
+      #
+      # That last property is why a dedicated non-following `nixpkgs-meridian`
+      # input is NOT an equivalent fix: it would be a direct input tracking
+      # nixos-unstable, so `nix flake update` would push it past the floor
+      # again and we would be back here.
+      #
+      # The cost is a second nixpkgs in the eval and the closure. Meridian is a
+      # leaf here (bun, nodejs_22, makeWrapper, stdenvNoCC, claude-code), so the
+      # extra closure is small, and it buys a host rebuild that cannot be broken
+      # by nixpkgs' claude-code timing.
     };
     # Spec 0027: Serena, an LSP-backed symbol-level MCP retrieval server.
     # Pinned to a commit for reproducibility; its flake exports
@@ -28,11 +78,6 @@
   outputs = { self, nixpkgs, microvm, meridian, serena }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        config.allowUnfree = true;
-        overlays = [ meridian.overlays.default ];
-      };
     in {
       packages.${system} = {
         default = self.packages.${system}.agent-vm;
@@ -45,10 +90,28 @@
           modules = [
             microvm.nixosModules.microvm
             {
-              # Expose meridian package into the NixOS module evaluation.
+              # ONE nixpkgs FOR THE WHOLE FLAKE: the module system's.
+              #
+              # This used to be two. A `pkgs = import nixpkgs { ... }` in the
+              # flake's `let` shadowed the module argument, so every `pkgs.*`
+              # in the module below resolved to that outer instance while the
+              # overlay set here applied to an instance nothing read. Two full
+              # nixpkgs evaluations, and the unfree allowance lived only on the
+              # outer one -- so the config evaluated by accident, and anything
+              # that did take `pkgs` from the module args would have failed on
+              # claude-code. Configure the module system's nixpkgs instead and
+              # take `pkgs` from the module arguments.
               nixpkgs.overlays = [ meridian.overlays.default ];
+              # Narrower than a blanket allowUnfree: claude-code is the only
+              # unfree package in this config, so name it rather than opening
+              # the gate for everything. (Meridian's own flake spells its
+              # allowance the same way, but note it evaluates against its own
+              # nixpkgs -- see the input comment above -- so this predicate
+              # governs only what the VM itself installs.)
+              nixpkgs.config.allowUnfreePredicate =
+                pkg: nixpkgs.lib.getName pkg == "claude-code";
             }
-            ({ config, ... }: {
+            ({ config, lib, pkgs, ... }: {
               networking.hostName = "agent-vm";
               networking.useDHCP = true;
 
@@ -472,7 +535,7 @@
                     HOME = "/home/agent";
                     # Ensure the claude CLI (agent SDK backend) is findable;
                     # the unit's inherited PATH is minimal (systemd default).
-                    PATH = nixpkgs.lib.mkForce "/run/current-system/sw/bin";
+                    PATH = lib.mkForce "/run/current-system/sw/bin";
                     # Default all adapters to passthrough so clients (pi, opencode)
                     # run their own tool loops and Meridian only forwards tool
                     # calls. Without this the daemon comes up in "internal" mode:
